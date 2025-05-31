@@ -1,53 +1,52 @@
-from flask import Flask, request, send_file, jsonify
+from flask import Flask, render_template, request, send_file
 from PIL import Image
-import io
 import os
+import io
 import zipfile
-import tempfile
 
 app = Flask(__name__)
 
-@app.route('/convert', methods=['POST'])
-def convert_images():
-    files = request.files.getlist('images')
-    scale = float(request.form.get('scale', 1))
 
-    if not files:
-        return jsonify({'error': 'No files uploaded'}), 400
+@app.route("/", methods=["GET", "POST"])
+def index():
+    if request.method == "POST":
+        scale = float(request.form.get("scale", 0.5))
+        images = request.files.getlist("images")
 
-    temp_dir = tempfile.mkdtemp()
-    zip_path = os.path.join(temp_dir, 'converted_images.zip')
+        # Get folder name from first image
+        zip_filename = "converted-to-webp.zip"
+        if images and "/" in images[0].filename:
+            folder_name = images[0].filename.split("/")[0]
+            zip_filename = f"{folder_name}-converted-to-webp.zip"
 
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for file in files:
-            try:
-                img = Image.open(file.stream)
-                # Resize image
-                new_size = (int(img.width * scale), int(img.height * scale))
-                img = img.resize(new_size, Image.ANTIALIAS).convert("RGB")
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED) as zipf:
+            for image in images:
+                try:
+                    img = Image.open(image).convert("RGB")
+                    w, h = img.size
+                    new_size = (int(w * scale), int(h * scale))
+                    img_resized = img.resize(new_size, Image.LANCZOS)
 
-                # Prepare filename
-                base_name = os.path.splitext(file.filename)[0]
-                new_filename = f"{base_name}-converted-to-webp.webp"
+                    base_name = os.path.splitext(os.path.basename(image.filename))[0]
+                    output_name = f"{base_name}_edited.webp"
 
-                # Save to bytes buffer
-                buffer = io.BytesIO()
-                img.save(buffer, format="WEBP", quality=80)
-                buffer.seek(0)
+                    img_io = io.BytesIO()
+                    img_resized.save(img_io, format="WEBP", quality=80)
+                    img_io.seek(0)
+                    zipf.writestr(output_name, img_io.read())
+                except Exception as e:
+                    print("❌ Error:", e)
 
-                # Add to zip
-                zipf.writestr(new_filename, buffer.read())
-            except Exception as e:
-                print(f"Failed to process {file.filename}: {e}")
-                continue
+        zip_buffer.seek(0)
+        return send_file(
+            zip_buffer,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=zip_filename,
+        )
+    return render_template("index.html")
 
-    return send_file(zip_path, mimetype='application/zip', as_attachment=True, download_name='converted_images.zip')
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(debug=True)
-# To run the app, use the command: python app.py
-# To test the app, you can use a tool like Postman or curl to send a POST request with files.
-# Make sure to install Flask and Pillow before running the app:
-# pip install Flask Pillow
-# Note: This code is for educational purposes and may require additional error handling and security measures for production use.
